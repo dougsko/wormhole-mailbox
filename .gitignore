@@ -1,0 +1,3 @@
+mailbox-server
+*.sqlite
+*.sqlite-backup-v*

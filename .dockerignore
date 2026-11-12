@@ -1,0 +1,17 @@
+# keep build context small and deterministic
+.git
+.gitignore
+Dockerfile
+README.md
+
+# local build artifacts and databases
+/mailbox-server
+*.sqlite
+*.sqlite-*
+*.db
+
+# editor/OS noise
+.idea/
+.vscode/
+*.swp
+.DS_Store

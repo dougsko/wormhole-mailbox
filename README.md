@@ -151,3 +151,37 @@ after disconnect (rows are deleted on disconnect, like the reference).
   usage summary, so a later `release` finds no nameplate and is a silent no-op.
 - The `current` usage row is written once at startup and every 5 minutes by the timer,
   mirroring twisted's TimerService (which runs its callable immediately at service start).
+
+## Running in a container (podman)
+
+```sh
+podman build --format docker -t wormhole-mailbox .
+podman run -d --name wormhole-mailbox \
+    -p 4000:4000 -v wormhole-mailbox-data:/data \
+    wormhole-mailbox
+```
+
+- `--format docker` keeps the `HEALTHCHECK` (podman's default OCI image
+  format drops it; the build still succeeds without it, you just lose the
+  health probe).
+- The image is alpine-based and runs as non-root uid 10001. `/data` is a
+  volume holding `relay.sqlite` (the default channel DB), `usage.sqlite`, etc.
+- If host port 4000 is taken on your machine, map any host port, e.g.
+  `-p 4500:4000`, and point clients at `--relay-url ws://localhost:4500/v1`.
+- Extra flags replace the default CMD entirely. To enable usage tracking and
+  the IP-address addrid DB:
+
+  ```sh
+  podman run -d --name wormhole-mailbox \
+      -p 4000:4000 -v wormhole-mailbox-data:/data \
+      wormhole-mailbox --port tcp:4000:interface=:: \
+      --channel-db /data/relay.sqlite \
+      --usage-db /data/usage.sqlite \
+      --addrid-db /data/addrid.sqlite
+  ```
+
+- `.dockerignore` keeps `.git`, local databases (`*.sqlite`), and editor
+  noise out of the build context.
+- Verified end-to-end: the unmodified Python client (`magic-wormhole`
+  0.24.0) completes a file transfer against the containerized mailbox and
+  relay (via `--no-listen` on both sides to force the relay path).

@@ -194,7 +194,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("unable to listen on %s: %v", listenAddr, err)
 	}
-	fmt.Printf("websocket listening on ws://HOSTNAME%s/v1\n", ln.Addr())
+	// print the bound address, and a ready-to-use client URL hint
+	if tcp, ok := ln.Addr().(*net.TCPAddr); ok {
+		fmt.Printf("websocket listening on ws://%s/v1 (clients on this machine: --relay-url ws://localhost:%d/v1)\n", ln.Addr(), tcp.Port)
+	} else {
+		fmt.Printf("websocket listening on ws://%s/v1\n", ln.Addr())
+	}
 
 	go func() {
 		if err := httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {

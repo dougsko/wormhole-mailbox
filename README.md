@@ -6,7 +6,8 @@ store-and-forward delivery of small key-exchange and control messages between th
 sides of a wormhole. Bulk data flows elsewhere (direct TCP or a
 [transit relay](https://github.com/magic-wormhole/magic-wormhole-transit-relay)).
 
-**Status: MVP (phase 1) complete.** Phase 2 items are listed at the bottom.
+**Status: feature-complete with the reference** (MVP + phase 2 usage/connections/addrid
+tracking). The wire protocol and both databases are compatible with the Python reference.
 
 ## Compatibility
 
@@ -17,6 +18,16 @@ sides of a wormhole. Bulk data flows elsewhere (direct TCP or a
 - Database-compatible `channel-v2` SQLite schema with the same `version` row and the same
   `upgrade-channel-to-v2.sql` migration chain. DBs created by either implementation can be
   opened and served by the other (verified; see "Interop testing" below).
+- Usage tracking to `usage-v2`: `nameplates`/`mailboxes` retirement summaries (with mood
+  handling), `client_versions` on bind, and a `current` row every 5 minutes (with
+  `connections_websocket`). `--blur-usage=N` rounds logged times down to N-second buckets,
+  exactly like the reference; `total_time` is computed from the unblurred start time as the
+  reference does.
+- Address-id tracker to `addrid-v1`: rotating generations (`--generation-duration`, default
+  86400s; check runs at startup and every 5 minutes) so distinct peers can be counted per
+  generation without retaining addresses indefinitely.
+- `connections`/`connection_messages` rows in the channel DB for every live connection
+  (established → bound on `bind` → message log → deleted on disconnect or restart).
 - Nameplate allocation, allocation preference for 1–3 digit ids, claim crowding rules,
   reclaimed-nameplate rejection, 11-minute channel expiry (5-minute check interval),
   message replay on `open`, echo-on-`add` delivery semantics, and mood handling on
@@ -35,13 +46,15 @@ Flags (names match the Python `twist wormhole-mailbox` plugin):
 
 - `--port` — twisted-style endpoint (default `tcp:4000:interface=::`), or `host:port`/`PORT`
 - `--channel-db` — path for the state database (default `relay.sqlite`), created/upgraded automatically
-- `--blur-usage` — round logged access times to N seconds (affects future usage-db logging)
+- `--usage-db` — record usage data (SQLite): retirement summaries, `client_versions`, `current` stats row
+- `--addrid-db` — address-id tracking database (SQLite); enables the rotating address tracker
+- `--generation-duration` — lifetime of the address-id tracking table (default 86400 seconds)
+- `--blur-usage` — round logged times down to N seconds (affects usage-db rows and `client_versions`)
 - `--advertise-version` — `current_cli_version` to put in `welcome`
 - `--signal-error` — `error` message to put in `welcome` (clients terminate)
 - `--motd` — `motd` to put in `welcome`
 - `--disallow-list` — respond to `list` with an empty set
 - `--websocket-protocol-option OPTION=VALUE` — accepted; autobahn-only options are ignored with a note
-- `--usage-db`, `--addrid-db`, `--generation-duration` — phase 2, not implemented yet (the server exits with an error if used)
 
 The server bumps `RLIMIT_NOFILE` to at least 10,000 if possible (best effort).
 
@@ -52,6 +65,8 @@ The server bumps `RLIMIT_NOFILE` to at least 10,000 if possible (best effort).
   `addrid-v1`), embedded verbatim SQL schemas (`db-schemas/`)
 - `internal/mailbox/server.go` — `Server`/`AppNamespace`/`Mailbox` core state machine:
   nameplates, claims, mailboxes, messages, replay, close/summarize, pruning
+- `internal/mailbox/address_id.go` — rotating address-id generation tracker (mirrors `address_id.py`)
+- `internal/mailbox/connections.go` — live-connection table (mirrors `connections.py`)
 - `internal/mailbox/websocket.go` — the wire protocol
 - `internal/mailbox/http.go` — plain-text root at `/`, WebSocket upgrade at `/v1`,
   `Server: Magic Wormhole Mailbox <version>` header
@@ -81,7 +96,11 @@ python3 -m venv /tmp/wormhole-venv
 
 Verified: Python file sent through the Go mailbox (fresh DB, Python-created DB), and a
 Go-created DB served by the reference Python server at the same commit — full transfers with
-md5-verified payloads.
+md5-verified payloads. Also verified with `--usage-db`/`--addrid-db` enabled: a Python→Python
+transfer (sender + receiver CLI) through the Go mailbox wrote `nameplates`/`mailboxes`
+`happy` rows, `client_versions` rows for both sides (`python 0.24.0`), `addrid_generation`
+row (generation 1), and `address_ids` rows; `connections`/`connection_messages` are empty
+after disconnect (rows are deleted on disconnect, like the reference).
 
 ## Intentional deviations from the reference
 
@@ -100,11 +119,17 @@ md5-verified payloads.
 - Nameplate-id allocation: random selection among available ids (reference does the same).
 - When no free nameplate exists, the reference crashes the connection; we return an error frame.
 
-## Phase 2 (planned, not yet implemented)
+## Notes and remaining phase-2 gaps
 
-- `--usage-db`: `nameplates`/`mailboxes` retirement summaries, `client_versions`, `current` row
-- `--addrid-db`: address-id tracker with rotating generations
-- `connections`/`connection_messages` table writes (the tables exist; writes are stubbed out for now)
-- `x-real-ip` spoof handling: already honored for `your-address` and logging
-- Munin-style plugin data (`current` usage row) and richer stats
-- `--usage-db`-based request logging blur behavior parity
+- `MAX_WAIT_TIME`/usage timers are intentionally not implemented (the reference has that
+  timer unused/commented out too).
+- Usage rows are written at the same lifecycle points as the reference (close/prune/release,
+  and for the mailbox also on prune). The reference deletes the nameplate rows on mailbox
+  close without recording a `nameplates` usage summary, so the `nameplates` row is written
+  when the nameplate is retired by release or prune instead (same behavior as the reference).
+- `x-real-ip` spoofing is not blocked, matching the reference (the value is only used for
+  hole-punching assistance and stats).
+- One reference quirk kept for parity: a mailbox close deletes nameplate rows without a
+  usage summary, so a later `release` finds no nameplate and is a silent no-op.
+- The `current` usage row is written once at startup and every 5 minutes by the timer,
+  mirroring twisted's TimerService (which runs its callable immediately at service start).

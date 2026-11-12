@@ -15,7 +15,7 @@ func testServer(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return NewServer(db, true, nil, nil, nil)
+	return NewServer(db, true, nil, nil, nil, nil)
 }
 
 func TestClaimCrowdedAndRelease(t *testing.T) {
@@ -226,7 +226,7 @@ func TestUsageSummaryHappy(t *testing.T) {
 	}
 	defer usageDB.Close()
 
-	s := NewServer(db, true, nil, nil, usageDB)
+	s := NewServer(db, true, nil, nil, usageDB, nil)
 	app := s.GetApp("app1")
 	now := time.Now().Unix()
 

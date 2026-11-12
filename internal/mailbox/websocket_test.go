@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -17,17 +18,19 @@ type testServerHandle struct {
 	server *Server
 	db     *sql.DB
 	url    string
+	dir    string
 	close  func()
 }
 
 func startTestWebSocketServer(t *testing.T) *testServerHandle {
 	t.Helper()
-	dbfile := filepath.Join(t.TempDir(), "relay.sqlite")
+	dir := t.TempDir()
+	dbfile := filepath.Join(dir, "relay.sqlite")
 	db, err := CreateOrUpgradeChannelDB(dbfile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := NewServer(db, true, map[string]interface{}{}, nil, nil)
+	server := NewServer(db, true, map[string]interface{}{}, nil, nil, nil)
 	handler := NewHandler(server, false, 60, 600)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -40,11 +43,18 @@ func startTestWebSocketServer(t *testing.T) *testServerHandle {
 		server: server,
 		db:     db,
 		url:    fmt.Sprintf("ws://127.0.0.1:%s/v1", port),
+		dir:    dir,
 		close: func() {
 			_ = httpServer.Close()
 			_ = listener.Close()
 			server.Shutdown()
-			db.Close()
+			// let websocket handler goroutines settle before closing the DB,
+			// then remove the directory ourselves so SQLite's transient
+			// journal files can't race TempDir cleanup
+			time.Sleep(50 * time.Millisecond)
+			_ = db.Close()
+			time.Sleep(10 * time.Millisecond)
+			_ = os.RemoveAll(dir)
 		},
 	}
 }
@@ -135,11 +145,6 @@ func TestWebSocketHappyPath(t *testing.T) {
 	defer a.close()
 	b := dial(t, h.url)
 	defer b.close()
-
-	// welcome should include your-address
-	// (dial already consumed it; re-check on a fresh connection)
-	c := dial(t, h.url)
-	_ = c // welcome consumed by dial; nothing more to check here
 
 	a.sendCommand(1, "bind", map[string]interface{}{"appid": "app-test", "side": "sideA"})
 	aAck := a.waitForType("ack")

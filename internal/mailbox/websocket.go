@@ -125,9 +125,10 @@ type websocketConn struct {
 	didClose    bool
 	handle      int64
 
-	writeMu sync.Mutex
-	closed  chan struct{}
-	once    sync.Once
+	writeMu    sync.Mutex
+	closed     chan struct{}
+	once       sync.Once
+	connection *Connection
 
 	pingInterval time.Duration
 	pingTimeout  time.Duration
@@ -166,12 +167,15 @@ func (ws *WebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return // upgrader already wrote the HTTP error
 	}
+	addressID := ws.server.GetAddressID(peer.typ, peer.host)
+	connection := ws.server.ConnectionEstablished(addressID, time.Now().Unix())
 	wc := &websocketConn{
 		conn:         conn,
 		server:       ws.server,
 		peer:         peer,
 		nameplateID:  "",
 		closed:       make(chan struct{}),
+		connection:   connection,
 		pingInterval: ws.pingInterval,
 		pingTimeout:  ws.pingTimeout,
 	}
@@ -269,6 +273,9 @@ func (wc *websocketConn) onClose() {
 	wc.once.Do(func() {
 		close(wc.closed)
 	})
+	if wc.connection != nil {
+		wc.connection.Lost()
+	}
 	if wc.app != nil && wc.mailbox != nil && wc.isListening {
 		wc.mailbox.RemoveListener(wc.handle)
 	}
@@ -296,6 +303,9 @@ func (wc *websocketConn) handleFrame(payload []byte) {
 
 	// ack is sent before the command executes (like the reference)
 	wc.sendAck(msg.idRaw())
+	if wc.connection != nil {
+		wc.connection.AddMessage(now, mtype)
+	}
 
 	// Serialize command handling with everything else (pruning runs under
 	// the same lock), mirroring the Python implementation's single-threaded
@@ -375,6 +385,9 @@ func (wc *websocketConn) handleBind(msg wsMsg, serverRx int64) error {
 			impl = strOrNone(tuple[0])
 			ver = strOrNone(tuple[1])
 		}
+	}
+	if wc.connection != nil {
+		wc.connection.Bound(side, impl, ver)
 	}
 	wc.app.logClientVersion(serverRx, side, impl, ver)
 	if wc.app.logRequests {

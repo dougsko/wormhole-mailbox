@@ -241,7 +241,6 @@ func (m *Mailbox) Close(side, mood string, when int64) error {
 	}
 	if m.usageDB != nil {
 		m.app.summarizeMailboxAndStore(m.usageDB, forNameplate, sideRows, when, false)
-		m.usageDB.Exec("SELECT 1") // keep symmetry with Python's commit
 	}
 	// shut down any lingering listeners
 	m.mu.Lock()
@@ -460,7 +459,6 @@ func (a *AppNamespace) ReleaseNameplate(name, side string, when int64) error {
 	}
 	if a.usageDB != nil {
 		a.summarizeNameplateAndStore(a.usageDB, sideRows, when, false)
-		a.usageDB.Exec("SELECT 1")
 	}
 	return nil
 }
@@ -483,15 +481,19 @@ func selectNameplateSideRows(db *sql.DB, npid int64) ([]sideRow, error) {
 }
 
 func (a *AppNamespace) summarizeNameplateAndStore(usageDB *sql.DB, sideRows []sideRow, deleteTime int64, pruned bool) {
-	u := summarizeUsage(sideRows, deleteTime, pruned, false)
-	usageDB.Exec("INSERT INTO `nameplates` (`app_id`, `started`, `total_time`, `waiting_time`, `result`)"+
-		" VALUES (?,?,?,?,?)", a.appID, u.started, u.totalTime, u.waitingTime, u.result)
+	u := summarizeUsage(sideRows, deleteTime, pruned, false, a.blurUsage)
+	if _, err := usageDB.Exec("INSERT INTO `nameplates` (`app_id`, `started`, `total_time`, `waiting_time`, `result`)"+
+		" VALUES (?,?,?,?,?)", a.appID, u.started, u.totalTime, u.waitingTime, u.result); err != nil {
+		fmt.Printf("warning: unable to record nameplate usage: %v\n", err)
+	}
 }
 
 func (a *AppNamespace) summarizeMailboxAndStore(usageDB *sql.DB, forNameplate bool, sideRows []sideRow, deleteTime int64, pruned bool) {
-	u := summarizeUsage(sideRows, deleteTime, pruned, true)
-	usageDB.Exec("INSERT INTO `mailboxes` (`app_id`, `for_nameplate`, `started`, `total_time`, `waiting_time`, `result`)"+
-		" VALUES (?,?,?,?,?,?)", a.appID, forNameplate, u.started, u.totalTime, u.waitingTime, u.result)
+	u := summarizeUsage(sideRows, deleteTime, pruned, true, a.blurUsage)
+	if _, err := usageDB.Exec("INSERT INTO `mailboxes` (`app_id`, `for_nameplate`, `started`, `total_time`, `waiting_time`, `result`)"+
+		" VALUES (?,?,?,?,?,?)", a.appID, forNameplate, u.started, u.totalTime, u.waitingTime, u.result); err != nil {
+		fmt.Printf("warning: unable to record mailbox usage: %v\n", err)
+	}
 }
 
 type usageSummary struct {
@@ -501,7 +503,7 @@ type usageSummary struct {
 	result      string
 }
 
-func summarizeUsage(sideRows []sideRow, deleteTime int64, pruned, isMailbox bool) usageSummary {
+func summarizeUsage(sideRows []sideRow, deleteTime int64, pruned, isMailbox bool, blurUsage *int) usageSummary {
 	times := make([]int64, 0, len(sideRows))
 	for _, sr := range sideRows {
 		times = append(times, sr.Added)
@@ -511,12 +513,16 @@ func summarizeUsage(sideRows []sideRow, deleteTime int64, pruned, isMailbox bool
 	if len(times) > 0 {
 		started = times[0]
 	}
+	totalTime := deleteTime - started
+	if blurUsage != nil && *blurUsage > 0 {
+		b := int64(*blurUsage)
+		started = b * (started / b)
+	}
 	var waitingTime *int64
 	if len(times) > 1 {
 		w := times[1] - times[0]
 		waitingTime = &w
 	}
-	totalTime := deleteTime - started
 
 	var result string
 	if !isMailbox {
@@ -736,7 +742,6 @@ func (a *AppNamespace) Prune(now, old int64) (bool, error) {
 	}
 
 	if modified && a.usageDB != nil {
-		a.usageDB.Exec("SELECT 1")
 	}
 	fmt.Printf(" prune complete, in_use=%v\n", len(a.mailboxes) > 0)
 	return len(a.mailboxes) > 0, nil
@@ -744,28 +749,83 @@ func (a *AppNamespace) Prune(now, old int64) (bool, error) {
 
 // Server is the top-level mailbox server.
 type Server struct {
-	mu          sync.Mutex
-	db          *sql.DB
-	usageDB     *sql.DB
-	allowList   bool
-	welcome     map[string]interface{}
-	blurUsage   *int
-	logRequests bool
-	apps        map[string]*AppNamespace
-	listenerSeq atomic.Int64
+	mu            sync.Mutex
+	db            *sql.DB
+	usageDB       *sql.DB
+	allowList     bool
+	welcome       map[string]interface{}
+	blurUsage     *int
+	logRequests   bool
+	apps          map[string]*AppNamespace
+	listenerSeq   atomic.Int64
+	connections   *ConnectionTable
+	addrIDTracker *AddressIDTracker
 }
 
 // NewServer builds a Server. welcome keys are included in the welcome message.
-func NewServer(db *sql.DB, allowList bool, welcome map[string]interface{}, blurUsage *int, usageDB *sql.DB) *Server {
-	return &Server{
-		db:          db,
-		usageDB:     usageDB,
-		allowList:   allowList,
-		welcome:     welcome,
-		blurUsage:   blurUsage,
-		logRequests: blurUsage == nil,
-		apps:        map[string]*AppNamespace{},
+// usageDB and addridDB are optional (nil disables the corresponding tracking).
+func NewServer(db *sql.DB, allowList bool, welcome map[string]interface{}, blurUsage *int, usageDB, addridDB *sql.DB) *Server {
+	s := &Server{
+		db:            db,
+		usageDB:       usageDB,
+		allowList:     allowList,
+		welcome:       welcome,
+		blurUsage:     blurUsage,
+		logRequests:   blurUsage == nil,
+		apps:          map[string]*AppNamespace{},
+		addrIDTracker: NewAddressIDTracker(db, addridDB),
 	}
+	s.connections = NewConnectionTable(db)
+	return s
+}
+
+// GetAddressID returns the rotating address ID for a peer, or nil if
+// address tracking is disabled.
+func (s *Server) GetAddressID(peerType, peerHost string) *AddressID {
+	if s.addrIDTracker == nil {
+		return nil
+	}
+	id, err := s.addrIDTracker.GetID(peerType, peerHost)
+	if err != nil {
+		fmt.Printf("warning: unable to allocate address id: %v\n", err)
+		return nil
+	}
+	return id
+}
+
+// ConnectionEstablished records a new connection in the channel database.
+func (s *Server) ConnectionEstablished(addressID *AddressID, now int64) *Connection {
+	return s.connections.Established(addressID, now)
+}
+
+// CheckAddrIDGeneration rotates the address-id generation if due.
+func (s *Server) CheckAddrIDGeneration(now, duration int64, force bool) error {
+	if s.addrIDTracker == nil {
+		return nil
+	}
+	return s.addrIDTracker.CheckGeneration(now, duration, force)
+}
+
+// DumpStats records a snapshot of current server state in the usage database.
+func (s *Server) DumpStats(now, rebooted int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.usageDB == nil {
+		return nil
+	}
+	connections := s.CountListeners()
+	if _, err := s.usageDB.Exec("DELETE FROM `current`"); err != nil {
+		return err
+	}
+	blurTime := interface{}(nil)
+	if s.blurUsage != nil {
+		blurTime = *s.blurUsage
+	}
+	if _, err := s.usageDB.Exec("INSERT INTO `current` (`rebooted`, `updated`, `blur_time`, `connections_websocket`) VALUES (?,?,?,?)",
+		rebooted, now, blurTime, connections); err != nil {
+		return err
+	}
+	return nil
 }
 
 // GetWelcome returns a copy of the welcome dict for the welcome message.
@@ -872,13 +932,7 @@ func (s *Server) PruneAllApps(now, old int64) error {
 // ClearConnections removes all connection records from the channel database.
 // Called at startup.
 func (s *Server) ClearConnections() error {
-	if _, err := s.db.Exec("DELETE FROM `connection_messages`"); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec("DELETE FROM `connections`"); err != nil {
-		return err
-	}
-	return nil
+	return s.connections.Clear()
 }
 
 // Shutdown forcibly boots any connected clients.
@@ -889,6 +943,7 @@ func (s *Server) Shutdown() {
 }
 
 // CountListeners returns the total number of live listeners across all apps.
+// Callers must hold s.mu (or be single-threaded with respect to handlers).
 func (s *Server) CountListeners() int {
 	total := 0
 	for _, app := range s.apps {
@@ -909,11 +964,12 @@ func (a *AppNamespace) logClientVersion(serverRx int64, side, implementation, ve
 	if a.usageDB == nil {
 		return
 	}
-	a.usageDB.Exec("INSERT INTO `client_versions`"+
+	if _, err := a.usageDB.Exec("INSERT INTO `client_versions`"+
 		" (`app_id`, `side`, `connect_time`, `implementation`, `version`)"+
 		" VALUES(?,?,?,?,?)",
-		a.appID, side, serverRx, nullable(implementation), nullable(version))
-	a.usageDB.Exec("SELECT 1")
+		a.appID, side, serverRx, nullable(implementation), nullable(version)); err != nil {
+		fmt.Printf("warning: unable to record client version: %v\n", err)
+	}
 }
 
 func nullable(s string) interface{} {

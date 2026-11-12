@@ -164,6 +164,16 @@ after disconnect (rows are deleted on disconnect, like the reference).
 
 ## Running in a container (podman)
 
+Pre-built multi-arch images are published to `ghcr.io/dougsko/wormhole-mailbox` by CI on
+every push to `main` (tag `latest` + `<git-sha>`) and on version tags (`v1.2.3` → `1.2.3`,
+`1.2`). Pull with:
+
+```sh
+podman pull ghcr.io/dougsko/wormhole-mailbox:latest
+```
+
+or build locally:
+
 ```sh
 podman build --format docker -t wormhole-mailbox .
 podman run -d --name wormhole-mailbox \

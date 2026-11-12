@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"wormhole-mailbox/internal/mailbox"
+	"github.com/dougsko/wormhole-mailbox/internal/mailbox"
 )
 
 const (

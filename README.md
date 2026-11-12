@@ -1,5 +1,7 @@
 # wormhole-mailbox
 
+Public home: <https://github.com/dougsko/wormhole-mailbox>
+
 A Go port of [magic-wormhole-mailbox-server](https://github.com/magic-wormhole/magic-wormhole-mailbox-server),
 the rendezvous server for [Magic Wormhole](https://magic-wormhole.io). It performs
 store-and-forward delivery of small key-exchange and control messages between the two
@@ -38,8 +40,16 @@ Tested with the unmodified Python `magic-wormhole` 0.24.0 CLI as both client and
 ## Building and running
 
 ```
+git clone https://github.com/dougsko/wormhole-mailbox.git
+cd wormhole-mailbox
 go build -o mailbox-server ./cmd/mailbox-server
 ./mailbox-server --port tcp:4000 --channel-db relay.sqlite
+```
+
+Or install the binary directly with Go:
+
+```
+go install github.com/dougsko/wormhole-mailbox/cmd/mailbox-server@latest
 ```
 
 Flags — the names, short flags, and defaults match the Python `twist wormhole-mailbox` plugin (twisted `usage.Options`), and the `--port` endpoint uses twisted endpoint syntax (`tcp:PORT[:interface=ADDR]`; a bare port or `host:port` is also accepted):
@@ -185,3 +195,10 @@ podman run -d --name wormhole-mailbox \
 - Verified end-to-end: the unmodified Python client (`magic-wormhole`
   0.24.0) completes a file transfer against the containerized mailbox and
   relay (via `--no-listen` on both sides to force the relay path).
+
+## License
+
+MIT — see [LICENSE](LICENSE). This is a Go port of the MIT-licensed Python
+[magic-wormhole-mailbox-server](https://github.com/magic-wormhole/magic-wormhole-mailbox-server);
+the schema files under `internal/mailbox/` (e.g. the `channel-v2` schema) are
+derived verbatim from the reference.

@@ -1,4 +1,4 @@
-module wormhole-mailbox
+module github.com/dougsko/wormhole-mailbox
 
 go 1.26.8
 

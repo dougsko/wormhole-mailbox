@@ -69,7 +69,7 @@ func parseEndpoint(ep string) (string, error) {
 
 func main() {
 	var (
-		port           = flag.String("port", defaultPort, "endpoint to listen on")
+		port           string
 		channelDB      = flag.String("channel-db", "relay.sqlite", "location for the state database")
 		usageDB        = flag.String("usage-db", "", "record usage data (SQLite)")
 		addridDB       = flag.String("addrid-db", "", "IP address mapping data (SQLite)")
@@ -81,6 +81,9 @@ func main() {
 		disallowList   = flag.Bool("disallow-list", false, "refuse to send list of allocated nameplates")
 		wsProtoOptions = flag.String("websocket-protocol-option", "", "websocket protocol option OPTION=VALUE (JSON value); may be given multiple times, comma-separated")
 	)
+	// option names and short flags match the Python "twist wormhole-mailbox" plugin
+	flag.StringVar(&port, "port", defaultPort, "endpoint to listen on")
+	flag.StringVar(&port, "p", defaultPort, "endpoint to listen on (shorthand)")
 	flag.Parse()
 
 	usage, err := mailbox.CreateOrUpgradeUsageDB(*usageDB)
@@ -104,7 +107,7 @@ func main() {
 	}
 	generationDuration := int64(*generationDur)
 
-	listenAddr, err := parseEndpoint(*port)
+	listenAddr, err := parseEndpoint(port)
 	if err != nil {
 		log.Fatalf("bad --port: %v", err)
 	}

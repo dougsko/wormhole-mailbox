@@ -42,19 +42,37 @@ go build -o mailbox-server ./cmd/mailbox-server
 ./mailbox-server --port tcp:4000 --channel-db relay.sqlite
 ```
 
-Flags (names match the Python `twist wormhole-mailbox` plugin):
+Flags — the names, short flags, and defaults match the Python `twist wormhole-mailbox` plugin (twisted `usage.Options`), and the `--port` endpoint uses twisted endpoint syntax (`tcp:PORT[:interface=ADDR]`; a bare port or `host:port` is also accepted):
 
-- `--port` — twisted-style endpoint (default `tcp:4000:interface=::`), or `host:port`/`PORT`
-- `--channel-db` — path for the state database (default `relay.sqlite`), created/upgraded automatically
-- `--usage-db` — record usage data (SQLite): retirement summaries, `client_versions`, `current` stats row
-- `--addrid-db` — address-id tracking database (SQLite); enables the rotating address tracker
-- `--generation-duration` — lifetime of the address-id tracking table (default 86400 seconds)
-- `--blur-usage` — round logged times down to N seconds (affects usage-db rows and `client_versions`)
-- `--advertise-version` — `current_cli_version` to put in `welcome`
-- `--signal-error` — `error` message to put in `welcome` (clients terminate)
-- `--motd` — `motd` to put in `welcome`
-- `--disallow-list` — respond to `list` with an empty set
-- `--websocket-protocol-option OPTION=VALUE` — accepted; autobahn-only options are ignored with a note
+| Flag | Default | Python equivalent | Description |
+|------|---------|-------------------|-------------|
+| `-p`, `--port` | `tcp:4000:interface=::` | `-p`, `--port` | endpoint to listen on |
+| `--channel-db` | `relay.sqlite` | `--channel-db` | state database, created/upgraded automatically |
+| `--usage-db` | (none) | `--usage-db` | record usage data (SQLite): retirement summaries, `client_versions`, `current` stats row |
+| `--addrid-db` | (none) | `--addrid-db` | address-id tracking database (SQLite); enables the rotating address tracker |
+| `--generation-duration` | `86400` | `--generation-duration` | lifetime of IP-address tracking table (seconds) |
+| `--blur-usage` | off | `--blur-usage` | round logged times down to N seconds (affects usage-db rows and `client_versions`) |
+| `--advertise-version` | (none) | `--advertise-version` | `current_cli_version` to put in `welcome` |
+| `--signal-error` | (none) | `--signal-error` | `error` message to put in `welcome` (clients terminate) |
+| `--motd` | (none) | `--motd` | `motd` to put in `welcome` |
+| `--disallow-list` | `false` | `--disallow-list` | respond to `list` with an empty set |
+| `--websocket-protocol-option OPTION=VALUE` | (none) | `--websocket-protocol-option` | accepted; autobahn-only options are ignored with a note |
+
+Notes on parity with the Python plugin:
+
+- `--blur-usage` on the Python side takes an integer and treats `0` (falsy) as
+  "no blur" — we mirror that: blurring happens only when N > 0, and the
+  default disables it.
+- Neither the Python plugin nor this server reads any environment variables;
+  configuration is flags only. The client-side environment variables
+  `WORMHOLE_RELAY_URL` (`ws://HOST:PORT/v1`, same as `--relay-url`) and
+  `WORMHOLE_TRANSIT_HELPER` (`tcp:HOST:PORT`, same as `--transit-helper`) are
+  honored by the `wormhole` CLI/library the same regardless of which server
+  implementation is used — they're how clients find *any* wormhole server.
+- Usage rows are written at the same lifecycle points as the reference
+  (close/prune/release, and for the mailbox also on prune). The `current`
+  usage row is written at startup and every 5 minutes (the Python plugin uses
+  twisted's `TimerService`, which runs immediately at service start).
 
 The server bumps `RLIMIT_NOFILE` to at least 10,000 if possible (best effort).
 

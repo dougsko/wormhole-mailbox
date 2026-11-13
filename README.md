@@ -270,6 +270,45 @@ podman run -d --name wormhole-mailbox \
   0.24.0) completes a file transfer against the containerized mailbox and
   relay (via `--no-listen` on both sides to force the relay path).
 
+## Running with Podman Quadlet
+
+Quadlet files are provided under `packaging/quadlet/` for easy deployment as
+systemd services using Podman. They pull the published image and use a
+named `wormhole-mailbox-data` volume, publish TCP port
+4000, and start the container on boot via the generated systemd unit.
+
+Rootful installation:
+
+```sh
+sudo cp packaging/quadlet/*.container /etc/containers/systemd/
+sudo systemctl daemon-reload
+sudo systemctl start wormhole-mailbox.service
+```
+
+Rootless installation:
+
+```sh
+mkdir -p ~/.config/containers/systemd
+cp packaging/quadlet/*.container ~/.config/containers/systemd/
+systemctl --user daemon-reload
+systemctl --user start wormhole-mailbox.service
+loginctl enable-linger "$USER"   # if it should start before login
+```
+
+The generated units have an `[Install]` section, so no separate
+`systemctl enable` is needed. Logs are available with:
+
+```sh
+sudo journalctl -u wormhole-mailbox.service -f      # rootful
+journalctl --user -u wormhole-mailbox.service -f    # rootless
+```
+
+The default `Exec=` uses the published image's defaults:
+`--port tcp:4000:interface=:: --channel-db /data/relay.sqlite`. Add
+`--usage-db`/`--addrid-db` flags to the Quadlet file if you want usage or
+address-IP tracking. Ensure host TCP port 4000 is open in the firewall if
+accessed over the internet.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). This is a Go port of the MIT-licensed Python

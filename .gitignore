@@ -1,3 +1,12 @@
 /mailbox-server
 *.sqlite
 *.sqlite-backup-v*
+
+# Local test artifacts
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

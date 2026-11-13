@@ -25,6 +25,8 @@ Python reference and the magic-wormhole 0.24.0 client:
   upgrade request to `/` is likewise served as `/v1`, so clients configured
   with just the server root work too; ordinary HTTP GETs at `/` still return
   the plain-text root document.
+- Add Podman Quadlet units under `packaging/quadlet/` for easy systemd-managed
+  deployment of the published container image and its data volume.
 
 Otherwise no behavior changes; verified: `go test ./...`, `-race`, and the
 full Python-client ↔ wormhole-william interop suite pass.

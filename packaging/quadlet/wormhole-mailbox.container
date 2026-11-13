@@ -1,0 +1,23 @@
+[Unit]
+Description=Magic Wormhole mailbox server (rendezvous)
+# Quadlet adds network dependencies automatically. If your distribution does
+# not provide network-online.target, remove those defaults in a drop-in.
+
+[Container]
+Image=ghcr.io/dougsko/wormhole-mailbox:latest
+ContainerName=wormhole-mailbox
+Exec=--port tcp:4000:interface=:: --channel-db /data/relay.sqlite
+PublishPort=4000:4000
+# The named volume is created automatically on first start.
+Volume=wormhole-mailbox-data:/data:Z
+AutoUpdate=registry
+NoNewPrivileges=true
+DropCapability=ALL
+ReadOnlyTmpfs=true
+# The service logs to stdout/stderr; systemd/journald captures them.
+
+[Service]
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

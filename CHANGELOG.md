@@ -30,3 +30,15 @@ Python reference and the magic-wormhole 0.24.0 client:
 
 Otherwise no behavior changes; verified: `go test ./...`, `-race`, and the
 full Python-client ↔ wormhole-william interop suite pass.
+
+### Container images
+
+- The Dockerfile now cross-compiles the server on the build platform for the
+  requested `--platform` (`TARGETOS`/`TARGETARCH`), so the `linux/arm64`
+  variant ships in both `ghcr.io/dougsko/wormhole-mailbox:latest` and semver
+  tags without any QEMU emulation (the `arm64` build of the Go module is
+  `CGO_ENABLED=0` and deterministic, identical compiler/flags for both arches).
+  The final stage performs no emulated steps: `/etc/passwd` and `/etc/group`
+  (with the `wormhole` user) and the `/data` directory are copied from the
+  build stage. CI additionally registers QEMU (`docker/setup-qemu-action`) as a
+  safety net for any future arm64-executed steps.

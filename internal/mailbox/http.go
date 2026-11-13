@@ -11,7 +11,9 @@ import (
 // stamp it via -ldflags "-X github.com/dougsko/wormhole-mailbox/internal/mailbox.Version=$(git describe --tags)".
 var Version = "0.8.0"
 
-// NewHandler builds the HTTP site: plain-text root at "/", WebSocket at "/v1".
+// NewHandler builds the HTTP site: plain-text root at "/" (WebSocket upgrades
+// at "/" are also accepted), WebSocket at "/v1" (and "/v1/" for clients that
+// append a trailing slash).
 // If logRequests is set, requests are logged (mirroring twisted's Site.log).
 // pingInterval/timeout follow autobahn's autoPingInterval/autoPingTimeout
 // (in seconds), with zero meaning "disabled".
@@ -21,8 +23,21 @@ func NewHandler(server *Server, logRequests bool, pingInterval, pingTimeout floa
 		time.Duration(pingTimeout*float64(time.Second)),
 	)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", RootHandler)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Some clients are configured with just the server root. If this is
+		// a WebSocket upgrade, treat it as a connection to /v1 instead of
+		// returning the plain-text body with a 200 status.
+		if r.URL.Path == "/" && isWebSocketUpgrade(r) {
+			ws.ServeHTTP(w, r)
+			return
+		}
+		RootHandler(w, r)
+	})
 	mux.Handle("/v1", ws)
+	// Be liberal in what we accept: clients configured with a trailing
+	// slash would otherwise fall through to the plain-text root handler and
+	// the WebSocket handshake would fail with "got 200".
+	mux.Handle("/v1/{$}", ws)
 
 	var handler http.Handler = mux
 	if logRequests {

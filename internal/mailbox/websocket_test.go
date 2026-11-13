@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -459,5 +460,56 @@ func TestWebSocketDirectResponseNullID(t *testing.T) {
 	}
 	if srx, ok := pong["server_rx"].(float64); !ok || srx <= 0 {
 		t.Fatalf("pong server_rx = %v, want positive number", pong["server_rx"])
+	}
+}
+
+func TestTrailingSlashWebSocketEndpoint(t *testing.T) {
+	handle := startTestWebSocketServer(t)
+	defer handle.close()
+	conn, resp, err := websocket.DefaultDialer.Dial(handle.url+"/", nil)
+	if err != nil {
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		t.Fatalf("expected websocket upgrade at %q, status=%d: %v", handle.url+"/", status, err)
+	}
+	defer conn.Close()
+	_, payload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var frame map[string]interface{}
+	if err := json.Unmarshal(payload, &frame); err != nil {
+		t.Fatal(err)
+	}
+	if frame["type"] != "welcome" {
+		t.Fatalf("expected welcome frame, got %v", frame)
+	}
+}
+
+func TestRootWebSocketUpgrade(t *testing.T) {
+	handle := startTestWebSocketServer(t)
+	defer handle.close()
+	base := strings.TrimSuffix(handle.url, "/v1")
+	conn, resp, err := websocket.DefaultDialer.Dial(base+"/", nil)
+	if err != nil {
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		t.Fatalf("expected websocket upgrade at %q, status=%d: %v", base+"/", status, err)
+	}
+	defer conn.Close()
+	_, payload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var frame map[string]interface{}
+	if err := json.Unmarshal(payload, &frame); err != nil {
+		t.Fatal(err)
+	}
+	if frame["type"] != "welcome" {
+		t.Fatalf("expected welcome frame, got %v", frame)
 	}
 }

@@ -155,6 +155,23 @@ func NewWebSocketServer(server *Server, autoPingInterval, autoPingTimeout time.D
 	}
 }
 
+// isWebSocketUpgrade reports whether the request is asking for a WebSocket
+// upgrade. The upgrader revalidates the full handshake, so this only needs to
+// distinguish likely upgrade requests from ordinary HTTP requests.
+func isWebSocketUpgrade(r *http.Request) bool {
+	return headerHasToken(r.Header.Get("Connection"), "upgrade") &&
+		strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket")
+}
+
+func headerHasToken(h, token string) bool {
+	for _, part := range strings.Split(h, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), token) {
+			return true
+		}
+	}
+	return false
+}
+
 // RootHandler serves the plain-text "Wormhole Relay\n" root.
 func RootHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")

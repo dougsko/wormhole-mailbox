@@ -96,7 +96,9 @@ The server bumps `RLIMIT_NOFILE` to at least 10,000 if possible (best effort).
 - `internal/mailbox/address_id.go` — rotating address-id generation tracker (mirrors `address_id.py`)
 - `internal/mailbox/connections.go` — live-connection table (mirrors `connections.py`)
 - `internal/mailbox/websocket.go` — the wire protocol
-- `internal/mailbox/http.go` — plain-text root at `/`, WebSocket upgrade at `/v1`,
+- `internal/mailbox/http.go` — plain-text root at `/` (WebSocket upgrades at
+  `/` are accepted as a client-compatibility extension), WebSocket upgrade at `/v1`
+  (also `/v1/` tolerated),
   `Server: Magic Wormhole Mailbox <version>` header
 - `internal/mailbox/rlimits.go` — rlimit bump
 

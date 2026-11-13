@@ -19,6 +19,12 @@ Python reference and the magic-wormhole 0.24.0 client:
 - `open` remains followed by an `ack` (the spec is self-contradictory; see
   README "Conformance with magic-wormhole-protocols" for the resolution and
   why wormhole-william depends on it staying).
+- The WebSocket endpoint is also served at `/v1/` (exact trailing-slash path),
+  so clients configured with a trailing slash no longer fall through to the
+  plain-text root handler and fail the handshake with "got 200". A WebSocket
+  upgrade request to `/` is likewise served as `/v1`, so clients configured
+  with just the server root work too; ordinary HTTP GETs at `/` still return
+  the plain-text root document.
 
 Otherwise no behavior changes; verified: `go test ./...`, `-race`, and the
 full Python-client ↔ wormhole-william interop suite pass.

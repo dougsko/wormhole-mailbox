@@ -141,6 +141,57 @@ transfer (sender + receiver CLI) through the Go mailbox wrote `nameplates`/`mail
 row (generation 1), and `address_ids` rows; `connections`/`connection_messages` are empty
 after disconnect (rows are deleted on disconnect, like the reference).
 
+## Conformance with magic-wormhole-protocols
+
+The server was audited statement-by-statement against the
+[magic-wormhole-protocols](https://github.com/magic-wormhole/magic-wormhole-protocols) spec
+(@ `566ee9e`, `server-protocol.md`). Result: conformant except for the items below, all of
+which are deliberate. Full audit matrix: `protocol_spec_plan.md`.
+
+Conformant and spec-mandated (verified by tests):
+
+- Direct responses to `ping`, `list`, `allocate`, `claim`, `release`, `close` echo the
+  command's `id` (or JSON `null` when absent, like `ack`) and carry a `server_rx` timestamp
+  (float seconds, same format as `server_tx`), as the spec requires.
+- `mood` is stored as SQL `NULL` when the `close` command omits it (not an empty string).
+- Nameplates are ASCII digits only (`[0-9]+`), ≤40 chars; `0` is accepted (YOLO mode); the
+  `type` key is required on every command; unknown types/keys handled per spec.
+
+Spec ambiguities and stale text, with our resolutions:
+
+- **No ack for `open`?** The spec's mailbox section says "There is no explicit ack to the
+  `open` command", but its transport section says the `ack` is "immediately sent back to the
+  client for all commands". We **keep** the `ack` for `open`: it matches the reference
+  implementation, and `wormhole-william` (this repository's companion Go client) *blocks* on
+  the `ack` in `sendAndWait`, so dropping it would break the Go client against this server.
+  Also spec-legal (clients must ignore unrecognized/extra frames only from the *server*; none
+  ignore `ack`), merely redundant.
+- **Binary-mode payload?** The spec mandates a binary-mode WebSocket payload for messages;
+  the reference and both mainstream clients use **text** frames (the Python client asserts
+  `not isBinary`). We send text frames. The spec's payload-mode sentence is stale.
+- **Ordered replay**: the spec says the server does not retain ordering; we replay `open`
+  history with `ORDER BY server_rx ASC` (same as the reference) — a refinement, not a
+  violation (clients may not *rely* on order, but it may).
+- **`server_rx` on `message` frames**: carried (float seconds), matching the reference; the
+  spec lists only `side`/`phase`/`body`/`id` for `message`, extra keys are explicitly
+  permitted.
+- **Acknowledgment** for every command remains **before** handling, and `ack.id` is echoed
+  verbatim; both are spec-mandated and kept.
+- **`your-address`**, **`client_version`** on `bind`, and the `Server` header are reference
+  (de-facto) extensions the spec does not name; extra keys are spec-legal ("Clients and
+  Servers must ignore unrecognized keys").
+- **"Permission to Use the Server"** (welcome `permission-required`, `submit-permissions`,
+  hashcash proof-of-work) is the one spec section deliberately **not implemented**; the
+  Python reference does not implement it either and no released client can speak it. The
+  server therefore always behaves as the spec's permissive case (proceed anyway). It may be
+  added later; the audit notes what's needed.
+- The spec cites `journal.md`, which does not exist in the protocols repository — it is a
+  client-side persistence concept; nothing for this server to implement.
+
+Out of scope for this server: `client-protocol.md` (PAKE/version/abilities — done by
+clients), `dilation-protocol.md`, `transit.md` (the transit *relay* is a separate server),
+`uri-scheme.md` and `file-transfer-protocol.md` (application-level).
+
 ## Intentional deviations from the reference
 
 - **Pruning drops cached `Mailbox` objects** for deleted channels (the reference leaves the

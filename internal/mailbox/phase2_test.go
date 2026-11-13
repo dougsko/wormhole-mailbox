@@ -129,10 +129,10 @@ func TestUsageStartedBlurredOnClose(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := mbA.Close("sideA", "happy", now+50); err != nil {
+	if err := mbA.Close("sideA", strptr("happy"), now+50); err != nil {
 		t.Fatal(err)
 	}
-	if err := mbB.Close("sideB", "happy", now+50); err != nil {
+	if err := mbB.Close("sideB", strptr("happy"), now+50); err != nil {
 		t.Fatal(err)
 	}
 

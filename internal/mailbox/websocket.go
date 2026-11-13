@@ -323,8 +323,14 @@ func (wc *websocketConn) handleFrame(payload []byte) {
 	}
 
 	now := time.Now().Unix()
+	serverRx := float64(time.Now().UnixNano()) / 1e9
 
-	// ack is sent before the command executes (like the reference)
+	// ack is sent before the command executes (like the reference). Per the
+	// spec the ack carries the command `id` for all commands; note that the
+	// mailbox section of server-protocol.md claims there is "no explicit ack
+	// to the `open` command" — the two statements conflict; we ack `open`
+	// because the transport-section rule ("all commands") is generic, the
+	// reference acks it too, and wormhole-william blocks on the ack.
 	wc.sendAck(msg.idRaw())
 	if wc.connection != nil {
 		wc.connection.AddMessage(now, mtype)
@@ -339,7 +345,7 @@ func (wc *websocketConn) handleFrame(payload []byte) {
 	var herr error
 	switch mtype {
 	case "ping":
-		herr = wc.handlePing(msg)
+		herr = wc.handlePing(msg, serverRx)
 	case "bind":
 		herr = wc.handleBind(msg, now)
 	default:
@@ -349,19 +355,19 @@ func (wc *websocketConn) handleFrame(payload []byte) {
 		}
 		switch mtype {
 		case "list":
-			herr = wc.handleList()
+			herr = wc.handleList(msg, serverRx)
 		case "allocate":
-			herr = wc.handleAllocate(now)
+			herr = wc.handleAllocate(msg, now, serverRx)
 		case "claim":
-			herr = wc.handleClaim(msg, now)
+			herr = wc.handleClaim(msg, now, serverRx)
 		case "release":
-			herr = wc.handleRelease(msg, now)
+			herr = wc.handleRelease(msg, now, serverRx)
 		case "open":
 			herr = wc.handleOpen(msg, now)
 		case "add":
 			herr = wc.handleAdd(msg, now)
 		case "close":
-			herr = wc.handleClose(msg, now)
+			herr = wc.handleClose(msg, now, serverRx)
 		default:
 			herr = errorf("unknown type")
 		}
@@ -378,12 +384,31 @@ func (wc *websocketConn) handleFrame(payload []byte) {
 	}
 }
 
-func (wc *websocketConn) handlePing(msg wsMsg) error {
+// directKv builds the key/value set for a direct response to a client
+// command. Per the spec (server-protocol.md), the command's `id` is copied
+// into the direct response, and direct responses include a `server_rx`
+// timestamp recording when the client's command was received (float seconds
+// since epoch, matching `server_tx`). When the command has no `id`, the
+// response carries JSON null (same convention as the `ack`).
+func directKv(msg wsMsg, serverRx float64, kv map[string]interface{}) map[string]interface{} {
+	if kv == nil {
+		kv = map[string]interface{}{}
+	}
+	if id := msg.idRaw(); id != nil {
+		kv["id"] = id
+	} else {
+		kv["id"] = nil
+	}
+	kv["server_rx"] = serverRx
+	return kv
+}
+
+func (wc *websocketConn) handlePing(msg wsMsg, serverRx float64) error {
 	raw, ok := msg["ping"]
 	if !ok {
 		return errorf("ping requires 'ping'")
 	}
-	return wc.send("pong", map[string]interface{}{"pong": raw})
+	return wc.send("pong", directKv(msg, serverRx, map[string]interface{}{"pong": raw}))
 }
 
 func (wc *websocketConn) handleBind(msg wsMsg, serverRx int64) error {
@@ -434,16 +459,16 @@ func strOrNone(raw json.RawMessage) string {
 	return strings.TrimSpace(string(raw))
 }
 
-func (wc *websocketConn) handleList() error {
+func (wc *websocketConn) handleList(msg wsMsg, serverRx float64) error {
 	ids := wc.app.GetNameplateIDs()
 	nameplates := make([]map[string]interface{}, 0, len(ids))
 	for _, id := range ids {
 		nameplates = append(nameplates, map[string]interface{}{"id": id})
 	}
-	return wc.send("nameplates", map[string]interface{}{"nameplates": nameplates})
+	return wc.send("nameplates", directKv(msg, serverRx, map[string]interface{}{"nameplates": nameplates}))
 }
 
-func (wc *websocketConn) handleAllocate(now int64) error {
+func (wc *websocketConn) handleAllocate(msg wsMsg, now int64, serverRx float64) error {
 	if wc.didAllocate {
 		return errorf("you already allocated one, don't be greedy")
 	}
@@ -453,10 +478,10 @@ func (wc *websocketConn) handleAllocate(now int64) error {
 		return fmt.Errorf("%v", err)
 	}
 	wc.didAllocate = true
-	return wc.send("allocated", map[string]interface{}{"nameplate": nameplateID})
+	return wc.send("allocated", directKv(msg, serverRx, map[string]interface{}{"nameplate": nameplateID}))
 }
 
-func (wc *websocketConn) handleClaim(msg wsMsg, now int64) error {
+func (wc *websocketConn) handleClaim(msg wsMsg, now int64, serverRx float64) error {
 	nameplateID, ok := msg.str("nameplate")
 	if !ok || nameplateID == "" {
 		return errorf("claim requires 'nameplate'")
@@ -479,14 +504,14 @@ func (wc *websocketConn) handleClaim(msg wsMsg, now int64) error {
 		}
 		return err
 	}
-	return wc.send("claimed", map[string]interface{}{"mailbox": mailboxID})
+	return wc.send("claimed", directKv(msg, serverRx, map[string]interface{}{"mailbox": mailboxID}))
 }
 
 func clientErrorFrom(err error) error {
 	return &clientError{msg: err.Error()}
 }
 
-func (wc *websocketConn) handleRelease(msg wsMsg, now int64) error {
+func (wc *websocketConn) handleRelease(msg wsMsg, now int64, serverRx float64) error {
 	if wc.didRelease {
 		return errorf("only one release per connection")
 	}
@@ -509,7 +534,7 @@ func (wc *websocketConn) handleRelease(msg wsMsg, now int64) error {
 	if err := wc.app.ReleaseNameplate(nameplateID, wc.side, now); err != nil {
 		return err
 	}
-	return wc.send("released", nil)
+	return wc.send("released", directKv(msg, serverRx, nil))
 }
 
 func (wc *websocketConn) handleOpen(msg wsMsg, now int64) error {
@@ -551,7 +576,7 @@ func messageFrame(sm SidedMessage) map[string]interface{} {
 		"side":      sm.Side,
 		"phase":     sm.Phase,
 		"body":      sm.Body,
-		"server_rx": sm.ServerRx,
+		"server_rx": float64(sm.ServerRx),
 		"id":        id,
 	}
 }
@@ -582,7 +607,7 @@ func (wc *websocketConn) handleAdd(msg wsMsg, now int64) error {
 	return wc.mailbox.AddMessage(sm)
 }
 
-func (wc *websocketConn) handleClose(msg wsMsg, now int64) error {
+func (wc *websocketConn) handleClose(msg wsMsg, now int64, serverRx float64) error {
 	if wc.didClose {
 		return errorf("only one close per connection")
 	}
@@ -601,11 +626,11 @@ func (wc *websocketConn) handleClose(msg wsMsg, now int64) error {
 		}
 		mailboxID = wc.mailboxID
 	}
-	mood := ""
+	var mood *string
 	if raw, ok := msg["mood"]; ok {
 		var m string
 		if err := json.Unmarshal(raw, &m); err == nil {
-			mood = m
+			mood = &m
 		}
 	}
 
@@ -628,5 +653,5 @@ func (wc *websocketConn) handleClose(msg wsMsg, now int64) error {
 		return err
 	}
 	wc.mailbox = nil
-	return wc.send("closed", nil)
+	return wc.send("closed", directKv(msg, serverRx, nil))
 }

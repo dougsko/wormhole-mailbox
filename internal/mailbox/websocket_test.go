@@ -376,3 +376,88 @@ func TestWebSocketMessageReplay(t *testing.T) {
 		t.Fatalf("wrong replay order: %v, %v", m1["body"], m2["body"])
 	}
 }
+
+func TestWebSocketDirectResponsesEchoIDAndServerRx(t *testing.T) {
+	h := startTestWebSocketServer(t)
+	defer h.close()
+
+	c := dial(t, h.url)
+	defer c.close()
+
+	checkID := func(frame map[string]interface{}, want float64) {
+		t.Helper()
+		got, ok := frame["id"].(float64)
+		if !ok {
+			t.Fatalf("frame %v missing numeric id", frame["type"])
+		}
+		if got != want {
+			t.Fatalf("frame %v id = %v, want %v", frame["type"], got, want)
+		}
+		srx, ok := frame["server_rx"].(float64)
+		if !ok || srx <= 0 {
+			t.Fatalf("frame %v server_rx = %v, want positive number", frame["type"], frame["server_rx"])
+		}
+		if stx, ok := frame["server_tx"].(float64); !ok || stx <= 0 {
+			t.Fatalf("frame %v server_tx = %v, want positive number", frame["type"], frame["server_tx"])
+		}
+	}
+
+	// ping (before bind; ping is allowed pre-bind)
+	c.sendCommand(101, "ping", map[string]interface{}{"ping": "hello"})
+	checkID(c.waitForType("pong"), 101)
+
+	// list (before bind returns must-bind error; do it after bind)
+	c.sendCommand(102, "bind", map[string]interface{}{"appid": "app-spec", "side": "sideA"})
+	c.waitForType("ack")
+	c.sendCommand(103, "list", nil)
+	c.waitForType("ack")
+	checkID(c.waitForType("nameplates"), 103)
+	// allocate
+	c.sendCommand(104, "allocate", nil)
+	c.waitForType("ack")
+	checkID(c.waitForType("allocated"), 104)
+	// claim (same nameplate as allocate; allocate already claimed it, so
+	// re-claim by the same side hits the "already claimed" path? No: the
+	// allocate path claims for `side`, and the claim here is from the same
+	// side, which is idempotent in nameplate_sides (same side row).)
+	c.sendCommand(105, "claim", map[string]interface{}{"nameplate": "9"})
+	c.waitForType("ack")
+	checkID(c.waitForType("claimed"), 105)
+	// repeat claim with same side is idempotent on the server; now release
+	c.sendCommand(106, "release", map[string]interface{}{"nameplate": "9"})
+	c.waitForType("ack")
+	checkID(c.waitForType("released"), 106)
+	// open + close; close must echo id and carry server_rx
+	c.sendCommand(107, "allocate", nil) // second allocate is rejected for the same connection
+	c.waitForType("ack")
+	c.waitForType("error")
+
+	// mood-less close on a fresh mailbox to exercise "closed" id/server_rx
+	c2 := dial(t, h.url)
+	defer c2.close()
+	c2.sendCommand(201, "bind", map[string]interface{}{"appid": "app-spec", "side": "sideC"})
+	c2.waitForType("ack")
+	c2.sendCommand(202, "open", map[string]interface{}{"mailbox": "mbx-spec-test"})
+	c2.waitForType("ack")
+	c2.sendCommand(203, "close", nil)
+	c2.waitForType("ack")
+	checkID(c2.waitForType("closed"), 203)
+}
+
+func TestWebSocketDirectResponseNullID(t *testing.T) {
+	h := startTestWebSocketServer(t)
+	defer h.close()
+
+	c := dial(t, h.url)
+	defer c.close()
+
+	// command without id: direct response must carry JSON null id
+	c.send(map[string]interface{}{"type": "ping", "ping": 7})
+	pong := c.waitForType("pong")
+	if v, present := pong["id"]; !present || v != nil {
+		t.Fatalf("expected explicit null id on pong, got %v (present=%v)", v, present)
+	}
+	if srx, ok := pong["server_rx"].(float64); !ok || srx <= 0 {
+		t.Fatalf("pong server_rx = %v, want positive number", pong["server_rx"])
+	}
+}

@@ -33,7 +33,7 @@ var CrowdedError = errors.New("crowded")
 // previously released.
 var ReclaimedError = errors.New("reclaimed")
 
-var nameplateRe = regexp.MustCompile(`^\d+$`)
+var nameplateRe = regexp.MustCompile(`^[0-9]+$`) // ASCII digits, per spec's "non-negative integer"
 
 // CheckValidNameplate validates a nameplate id: at most 40 digits.
 func CheckValidNameplate(n string) error {
@@ -183,10 +183,12 @@ func rawMsgID(id json.RawMessage) interface{} {
 	return string(id)
 }
 
-// Close records that a side closed the mailbox. When the last side closes,
-// the mailbox (and its nameplate, if any) are deleted and any usage
-// summary is written.
-func (m *Mailbox) Close(side, mood string, when int64) error {
+// Close records that a side closed the mailbox. mood may be nil, in which
+// case SQL NULL is stored (matching the reference); no-mood closes are
+// recorded that way so usage summaries can distinguish "client sent no
+// mood" from an empty-string mood. When the last side closes, the mailbox
+// (and its nameplate, if any) are deleted and any usage summary is written.
+func (m *Mailbox) Close(side string, mood *string, when int64) error {
 	db := m.db
 	row := db.QueryRow("SELECT `for_nameplate` FROM `mailboxes` WHERE `app_id`=? AND `id`=?",
 		m.appID, m.mailboxID)
@@ -195,8 +197,12 @@ func (m *Mailbox) Close(side, mood string, when int64) error {
 		return nil // mailbox already gone
 	}
 
+	var moodArg interface{}
+	if mood != nil {
+		moodArg = *mood
+	}
 	res, err := db.Exec("UPDATE `mailbox_sides` SET `opened`=?, `mood`=? WHERE `mailbox_id`=? AND `side`=?",
-		false, mood, m.mailboxID, side)
+		false, moodArg, m.mailboxID, side)
 	if err != nil {
 		return err
 	}

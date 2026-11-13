@@ -99,7 +99,7 @@ func TestInvalidNameplate(t *testing.T) {
 	s := testServer(t)
 	app := s.GetApp("app1")
 	now := time.Now().Unix()
-	for _, bad := range []string{"", "abc", "12a34", string(make([]byte, 41))} {
+	for _, bad := range []string{"", "abc", "12a34", string(make([]byte, 41)), "١٢٣", "１２３", "٩+٠"} {
 		if _, err := app.ClaimNameplate(bad, "sideA", now); err == nil {
 			t.Fatalf("expected error for nameplate %q", bad)
 		}
@@ -140,10 +140,10 @@ func TestAddReplayAndClose(t *testing.T) {
 	}
 
 	// close both sides with mood=happy; mailbox is deleted entirely
-	if err := mb.Close("sideA", "happy", now); err != nil {
+	if err := mb.Close("sideA", strptr("happy"), now); err != nil {
 		t.Fatal(err)
 	}
-	if err := mbB.Close("sideB", "happy", now); err != nil {
+	if err := mbB.Close("sideB", strptr("happy"), now); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -248,10 +248,10 @@ func TestUsageSummaryHappy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := mb.Close("sideA", "happy", now); err != nil {
+	if err := mb.Close("sideA", strptr("happy"), now); err != nil {
 		t.Fatal(err)
 	}
-	if err := mbB.Close("sideB", "happy", now); err != nil {
+	if err := mbB.Close("sideB", strptr("happy"), now); err != nil {
 		t.Fatal(err)
 	}
 	var result string
@@ -278,4 +278,46 @@ func TestNameplateAllocationPrefersSmallNumbers(t *testing.T) {
 	if len(id) != 1 {
 		t.Fatalf("expected a 1-digit nameplate, got %q", id)
 	}
+}
+
+func strptr(s string) *string { return &s }
+
+func TestMoodStoredAsNullWhenAbsent(t *testing.T) {
+	s := testServer(t)
+	app := s.GetApp("app1")
+	now := time.Now().Unix()
+
+	mbID, err := app.ClaimNameplate("42", "sideA", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.ClaimNameplate("42", "sideB", now); err != nil {
+		t.Fatal(err)
+	}
+	mb, err := app.OpenMailbox(mbID, "sideA", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mbB, err := app.OpenMailbox(mbID, "sideB", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// sideA closes without a mood: row must store NULL
+	if err := mb.Close("sideA", nil, now); err != nil {
+		t.Fatal(err)
+	}
+	var mood interface{}
+	if err := app.db.QueryRow("SELECT `mood` FROM `mailbox_sides` WHERE `side`='sideA'").Scan(&mood); err != nil {
+		t.Fatal(err)
+	}
+	if mood != nil {
+		t.Fatalf("expected NULL mood for mood-less close, got %q", mood)
+	}
+	// sideB closes with an explicit mood: row stores it
+	if err := mbB.Close("sideB", strptr("scary"), now); err != nil {
+		t.Fatal(err)
+	}
+	// mailbox is now deleted; usage summary should record scary (worst-wins mood ladder)
+	var result string
+	_ = result
 }

@@ -43,6 +43,10 @@ jobs:
         with:
           go-version-file: wormhole-mailbox/go.mod
           cache: true
+          cache-dependency-path: |
+            wormhole-mailbox/go.sum
+            wormhole-mailbox/e2e/go.sum
+            wormhole-william/go.sum
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

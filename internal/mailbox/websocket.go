@@ -230,11 +230,34 @@ func (wc *websocketConn) run() {
 	defer wc.conn.Close()
 	defer wc.onClose()
 
-	// autobahn's autoPingInterval/autoPingTimeout
+	// Liveness semantics follow autobahn's autoPingInterval/autoPingTimeout:
+	// drop the connection when no pong is received within autoPingTimeout of
+	// the server's ping. The read deadline is refreshed on every received
+	// frame (data, ping, or pong) — gorilla does not surface control frames
+	// through ReadMessage, so the deadline must be refreshed by the handlers
+	// or idle-but-responsive clients are dropped.
+	if wc.pingTimeout > 0 {
+		wc.conn.SetPongHandler(func(appData string) error {
+			_ = wc.conn.SetReadDeadline(time.Now().Add(wc.pingTimeout))
+			return nil
+		})
+		// a client ping is equally good evidence of life; keep gorilla's
+		// default ping handler (it replies with a pong) and additionally
+		// extend the read deadline
+		wc.conn.SetPingHandler(func(appData string) error {
+			_ = wc.conn.SetReadDeadline(time.Now().Add(wc.pingTimeout))
+			if err := wc.conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(10*time.Second)); err != nil {
+				return err
+			}
+			return nil
+		})
+	}
 	if wc.pingInterval > 0 {
 		go wc.pingLoop()
 	}
-	_ = wc.conn.SetReadDeadline(time.Now().Add(wc.pingTimeout))
+	if wc.pingTimeout > 0 {
+		_ = wc.conn.SetReadDeadline(time.Now().Add(wc.pingTimeout))
+	}
 
 	wc.sendWelcome()
 

@@ -7,8 +7,9 @@ import (
 )
 
 // Version is the reported server version (Server response header and the
-// WebSocket handshake's server header).
-const Version = "0.8.0"
+// WebSocket handshake's server header). It is a var so release builds can
+// stamp it via -ldflags "-X github.com/dougsko/wormhole-mailbox/internal/mailbox.Version=$(git describe --tags)".
+var Version = "0.8.0"
 
 // NewHandler builds the HTTP site: plain-text root at "/", WebSocket at "/v1".
 // If logRequests is set, requests are logged (mirroring twisted's Site.log).

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -23,6 +25,35 @@ const (
 	channelExpiryTime  = 11 * time.Minute
 	expirationInterval = 5 * time.Minute
 )
+
+// wsProtoOptionFlag allows --websocket-protocol-option OPTION=VALUE to be
+// given multiple times, matching the Python plugin's repeat-flag semantics
+// (and twisted's usage.Options). VALUE is parsed as JSON, like the Python
+// implementation's json.loads(value).
+type wsProtoOptionFlag map[string]interface{}
+
+func (f wsProtoOptionFlag) String() string {
+	keys := make([]string, 0, len(f))
+	for k := range f {
+		keys = append(keys, k+"=...")
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ",")
+}
+
+func (f wsProtoOptionFlag) Set(s string) error {
+	eq := strings.Index(s, "=")
+	if eq <= 0 {
+		return fmt.Errorf("format options as OPTION=VALUE")
+	}
+	key, valueStr := strings.TrimSpace(s[:eq]), strings.TrimSpace(s[eq+1:])
+	var value interface{}
+	if err := json.Unmarshal([]byte(valueStr), &value); err != nil {
+		return fmt.Errorf("could not parse JSON value for %s: %v", key, err)
+	}
+	f[key] = value
+	return nil
+}
 
 // parseEndpoint parses a twisted-style endpoint string into a Go listen
 // address. Supported forms:
@@ -67,6 +98,27 @@ func parseEndpoint(ep string) (string, error) {
 	return fmt.Sprintf("%s:%d", iface, port), nil
 }
 
+// wsProtoFloat converts a JSON value for autoPingInterval/autoPingTimeout
+// into a float64. JSON numbers decode as float64 (or int/uint/int64).
+func wsProtoFloat(key string, v interface{}) (float64, error) {
+	switch n := v.(type) {
+	case float64:
+		return n, nil
+	case float32:
+		return float64(n), nil
+	case int:
+		return float64(n), nil
+	case int64:
+		return float64(n), nil
+	case uint64:
+		return float64(n), nil
+	case json.Number:
+		return n.Float64()
+	default:
+		return 0, fmt.Errorf("want a number of seconds, got %v (%T)", v, v)
+	}
+}
+
 func main() {
 	var (
 		port           string
@@ -79,8 +131,9 @@ func main() {
 		signalError    = flag.String("signal-error", "", "force all clients to fail with a message")
 		motd           = flag.String("motd", "", "Send a Message of the Day in the welcome")
 		disallowList   = flag.Bool("disallow-list", false, "refuse to send list of allocated nameplates")
-		wsProtoOptions = flag.String("websocket-protocol-option", "", "websocket protocol option OPTION=VALUE (JSON value); may be given multiple times, comma-separated")
+		wsProtoOptions = wsProtoOptionFlag{}
 	)
+	flag.Var(&wsProtoOptions, "websocket-protocol-option", "websocket protocol option OPTION=VALUE (JSON value); may be given multiple times, like the Python plugin")
 	// option names and short flags match the Python "twist wormhole-mailbox" plugin
 	flag.StringVar(&port, "port", defaultPort, "endpoint to listen on")
 	flag.StringVar(&port, "p", defaultPort, "endpoint to listen on (shorthand)")
@@ -112,16 +165,26 @@ func main() {
 		log.Fatalf("bad --port: %v", err)
 	}
 
-	// websocket protocol options (subset: autoPingInterval, autoPingTimeout)
+	// websocket protocol options: autobahn-relevant subset is
+	// autoPingInterval/autoPingTimeout, which autobahn interprets in seconds
+	// (0 disables pinging). Everything else is accepted for twist-platform
+	// parity but ignored with a note, as documented.
 	autoPingInterval := 60.0
 	autoPingTimeout := 600.0
-	if *wsProtoOptions != "" {
-		for _, pair := range strings.Split(*wsProtoOptions, ",") {
-			kv := strings.SplitN(strings.TrimSpace(pair), "=", 2)
-			if len(kv) != 2 {
-				log.Fatalf("bad --websocket-protocol-option %q (want OPTION=VALUE)", pair)
+	for k, v := range wsProtoOptions {
+		switch k {
+		case "autoPingInterval", "autoPingTimeout":
+			n, err := wsProtoFloat(k, v)
+			if err != nil {
+				log.Fatalf("bad --websocket-protocol-option %s: %v", k, err)
 			}
-			fmt.Printf("note: websocket protocol option %s ignored (only autoPingInterval/autoPingTimeout are used)\n", kv[0])
+			if k == "autoPingInterval" {
+				autoPingInterval = n
+			} else {
+				autoPingTimeout = n
+			}
+		default:
+			fmt.Printf("note: websocket protocol option %s ignored\n", k)
 		}
 	}
 
@@ -191,7 +254,12 @@ func main() {
 	}()
 
 	handler := mailbox.NewHandler(server, *blurUsage < 0, autoPingInterval, autoPingTimeout)
-	httpServer := &http.Server{Addr: listenAddr, Handler: handler}
+	httpServer := &http.Server{
+		Addr:              listenAddr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {

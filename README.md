@@ -113,6 +113,17 @@ go test ./...            # unit + in-process end-to-end tests
 go test ./... -race      # race detector
 ```
 
+Automated interoperability suite (Python magic-wormhole client and the wormhole-william
+Go library, against a real `mailbox-server` binary; text/file/directory both directions;
+sha256-verified):
+
+```
+cd e2e && go test -tags=e2e -v .
+```
+
+See [e2e/README.md](e2e/README.md) for requirements (Python client + wormhole-william
+checkout) and the environment knobs. Runs in CI as the `e2e` job.
+
 Interop testing (both directions of database compatibility, plus plain client/server):
 
 ```

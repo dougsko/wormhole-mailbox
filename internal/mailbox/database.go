@@ -16,7 +16,7 @@ import (
 	"os"
 	"path/filepath"
 
-	_ "modernc.org/sqlite" // pure-Go SQLite driver
+	_ "github.com/mattn/go-sqlite3" // cgo SQLite driver
 )
 
 //go:embed db-schemas
@@ -61,9 +61,9 @@ func readUpgrader(name string, newVersion int) (string, error) {
 func openDBConnection(dbfile string) (*sql.DB, error) {
 	dsn := dbfile
 	if dbfile != ":memory:" {
-		dsn = "file:" + dbfile + "?_pragma=foreign_keys(1)"
+		dsn = "file:" + dbfile + "?_busy_timeout=5000"
 	}
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, dbErrorf("unable to create/open db file %q: %v", dbfile, err)
 	}

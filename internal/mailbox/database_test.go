@@ -40,7 +40,7 @@ func TestChannelDBUpgradeFromV1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := sql.Open("sqlite", "file:"+dbfile)
+	raw, err := sql.Open("sqlite3", "file:"+dbfile)
 	if err != nil {
 		t.Fatal(err)
 	}

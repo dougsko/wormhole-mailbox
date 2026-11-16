@@ -513,3 +513,67 @@ func TestRootWebSocketUpgrade(t *testing.T) {
 		t.Fatalf("expected welcome frame, got %v", frame)
 	}
 }
+
+// TestWedgedListenerIsDisconnected: side B opens the mailbox and then stops
+// reading entirely (small TCP receive buffer so the pipe fills fast). The
+// server must not stall side A behind B's unread data: A's adds keep being
+// answered, and once B's outbound queue fills, the server drops B.
+//
+// On the pre-queue implementation this test times out waiting for the add
+// echo (the server was blocked up to the 10s write deadline, inside the
+// global lock).
+func TestWedgedListenerIsDisconnected(t *testing.T) {
+	h := startTestWebSocketServer(t)
+	defer h.close()
+
+	a := dial(t, h.url)
+	defer a.close()
+	b := dial(t, h.url)
+	defer b.close()
+	// squeeze B's receive buffer so the connection fills quickly
+	if tc, ok := b.conn.UnderlyingConn().(*net.TCPConn); ok {
+		_ = tc.SetReadBuffer(4096)
+	}
+
+	a.sendCommand(1, "bind", map[string]interface{}{"appid": "app-wedge", "side": "sideA"})
+	a.waitForType("ack")
+	b.sendCommand(1, "bind", map[string]interface{}{"appid": "app-wedge", "side": "sideB"})
+	b.waitForType("ack")
+
+	a.sendCommand(2, "claim", map[string]interface{}{"nameplate": "1"})
+	claimed := a.waitForType("claimed")
+	mailbox, _ := claimed["mailbox"].(string)
+	b.sendCommand(2, "claim", map[string]interface{}{"nameplate": "1"})
+	b.waitForType("claimed")
+
+	a.sendCommand(3, "open", map[string]interface{}{"mailbox": mailbox})
+	a.waitForType("ack")
+	b.sendCommand(3, "open", map[string]interface{}{"mailbox": mailbox})
+	b.waitForType("ack")
+
+	// B stops reading here; A adds fat messages until the server
+	// disconnects B (outbound queue full). A reads its own echoes, so A's
+	// path stays drained; only B's path wedges. The upper bound is
+	// generous: how much kernel buffering absorbs before the queue fills
+	// is machine-dependent.
+	body := strings.Repeat("ab", 512) // 1KB body
+	dropped := false
+	for i := 0; i < 10000 && !dropped; i++ {
+		a.sendCommand(1000+i, "add", map[string]interface{}{"phase": "0", "body": body})
+		a.waitForType("message")
+		h.server.mu.Lock()
+		n := h.server.CountListeners()
+		h.server.mu.Unlock()
+		dropped = n == 1
+	}
+	if !dropped {
+		t.Fatal("wedged listener was not disconnected after 10000 adds")
+	}
+
+	// A is still responsive after the wedge was dropped
+	a.sendCommand(9000, "list", nil)
+	a.waitForType("nameplates")
+
+	// B must have been disconnected by the server (outbound queue full):
+	// listener count dropped back to just A.
+}

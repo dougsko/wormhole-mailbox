@@ -125,11 +125,17 @@ type websocketConn struct {
 	didClose    bool
 	handle      int64
 
-	writeMu    sync.Mutex
 	closed     chan struct{}
 	once       sync.Once
 	connection *Connection
 
+	// outbound carries pre-marshaled frames to the writer goroutine.
+	// A bounded queue gives each connection independent backpressure:
+	// a client that stops reading fills its own queue and is then
+	// disconnected, instead of stalling every other client (the mailbox
+	// protocol delivers messages or drops the client; messages are
+	// stored server-side, so a dropped client recovers on reconnect).
+	outbound     chan []byte
 	pingInterval time.Duration
 	pingTimeout  time.Duration
 }
@@ -141,6 +147,11 @@ type WebSocketServer struct {
 	pingTimeout  time.Duration
 	upgrader     websocket.Upgrader
 }
+
+// outboundQueueSize is the maximum number of frames buffered for a
+// connection that is not draining. At this depth (small frames, KB each)
+// a wedged client is disconnected rather than allowed to block others.
+const outboundQueueSize = 256
 
 // NewWebSocketServer builds the handler. autoPingInterval/autoPingTimeout
 // match autobahn's defaults (60s / 600s).
@@ -192,10 +203,12 @@ func (ws *WebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		peer:         peer,
 		nameplateID:  "",
 		closed:       make(chan struct{}),
+		outbound:     make(chan []byte, outboundQueueSize),
 		connection:   connection,
 		pingInterval: ws.pingInterval,
 		pingTimeout:  ws.pingTimeout,
 	}
+	go wc.writer()
 	go wc.run()
 }
 
@@ -203,7 +216,11 @@ func (wc *websocketConn) yourAddress() map[string]interface{} {
 	return wc.peer.yourAddress()
 }
 
-// send encodes a frame and writes it with a server_tx timestamp.
+// send encodes a frame and queues it for the writer goroutine, which is
+// the only writer of data frames. It never blocks on the network: when
+// the connection's outbound queue is full, the peer is not draining and
+// is disconnected (undeliverable messages remain stored in the mailbox,
+// so a reconnecting client sees them).
 func (wc *websocketConn) send(mtype string, kv map[string]interface{}) error {
 	msg := map[string]interface{}{}
 	for k, v := range kv {
@@ -215,15 +232,40 @@ func (wc *websocketConn) send(mtype string, kv map[string]interface{}) error {
 	if err != nil {
 		return err
 	}
-	wc.writeMu.Lock()
-	defer wc.writeMu.Unlock()
 	select {
 	case <-wc.closed:
 		return errors.New("connection closed")
 	default:
 	}
-	_ = wc.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	return wc.conn.WriteMessage(websocket.TextMessage, payload)
+	select {
+	case wc.outbound <- payload:
+		return nil
+	default:
+		fmt.Printf("dropping connection to %s:%d: outbound queue full (client not reading)\n",
+			wc.peer.host, wc.peer.port)
+		_ = wc.conn.Close()
+		return errors.New("outbound queue full")
+	}
+}
+
+// writer is the only goroutine that writes data frames to the connection.
+// It drains outbound until the connection is closed; frames queued after
+// the close are discarded.
+func (wc *websocketConn) writer() {
+	for {
+		select {
+		case <-wc.closed:
+			return
+		case payload := <-wc.outbound:
+			_ = wc.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := wc.conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+				// The read side (run) will also tear down; closing here
+				// just expedites it. close is idempotent.
+				_ = wc.conn.Close()
+				return
+			}
+		}
+	}
 }
 
 func (wc *websocketConn) sendWelcome() {
@@ -301,10 +343,10 @@ func (wc *websocketConn) pingLoop() {
 		case <-wc.closed:
 			return
 		case <-ticker.C:
-			wc.writeMu.Lock()
-			_ = wc.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			_ = wc.conn.WriteMessage(websocket.PingMessage, []byte{})
-			wc.writeMu.Unlock()
+			// Control frames are safe to write concurrently with the
+			// writer goroutine's data frames.
+			_ = wc.conn.WriteControl(websocket.PingMessage, []byte{},
+				time.Now().Add(10*time.Second))
 		}
 	}
 }

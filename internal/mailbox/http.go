@@ -23,16 +23,23 @@ func NewHandler(server *Server, logRequests bool, pingInterval, pingTimeout floa
 		time.Duration(pingTimeout*float64(time.Second)),
 	)
 	mux := http.NewServeMux()
+
+	// Root handler - plain text or WebSocket upgrade
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Some clients are configured with just the server root. If this is
-		// a WebSocket upgrade, treat it as a connection to /v1 instead of
-		// returning the plain-text body with a 200 status.
 		if r.URL.Path == "/" && isWebSocketUpgrade(r) {
 			ws.ServeHTTP(w, r)
 			return
 		}
 		RootHandler(w, r)
 	})
+
+	// API endpoint for dashboard stats
+	mux.Handle("/api/stats", getStatsAPI(server))
+
+	// Dashboard HTML
+	mux.Handle("/dashboard", getDashboardHandler())
+
+	// WebSocket endpoint
 	mux.Handle("/v1", ws)
 	// Be liberal in what we accept: clients configured with a trailing
 	// slash would otherwise fall through to the plain-text root handler and

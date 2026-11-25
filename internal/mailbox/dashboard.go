@@ -110,7 +110,7 @@ const dashboardHTML = `<!DOCTYPE html>
     <div class="timestamp">Last updated: <span id="lastUpdated">—</span></div>
   </main>
 
-  <script src="/static/chart.umd.min.js" integrity="sha384-dsN6yzfVr55Hd2g1XIwnt1QJUXEdDvoVVKY3bzYrn0xAvcIYVogKEEYd43E9rKTf" crossorigin="anonymous"></script>
+  <script src="/static/chart.umd.min.js"></script>
   <script>
     var colors = {
       happy: '#22c55e', lonely: '#f59e0b', pruney: '#6366f1',
@@ -125,8 +125,8 @@ const dashboardHTML = `<!DOCTYPE html>
       }
       charts.nameplate = new Chart(document.getElementById('nameplateChart'), { type: 'doughnut', data: { labels: [], datasets: [{ data: [], backgroundColor: [] }] }, options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { position: 'right', labels: { font: { size: 11 } } } } } });
       charts.mailbox = new Chart(document.getElementById('mailboxChart'), { type: 'doughnut', data: { labels: [], datasets: [{ data: [], backgroundColor: [] }] }, options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { position: 'right', labels: { font: { size: 11 } } } } } });
-      charts.clientImpl = new Chart(document.getElementById('clientImplChart'), { type: 'bar', data: { labels: [], datasets: [{ data: [], backgroundColor: '#3b82f6' }] }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } } } });
-      charts.clientVer = new Chart(document.getElementById('clientVerChart'), { type: 'bar', data: { labels: [], datasets: [{ data: [], backgroundColor: '#3b82f6' }] }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } } } });
+      charts.clientImpl = new Chart(document.getElementById('clientImplChart'), { type: 'bar', data: { labels: [], datasets: [{ data: [], backgroundColor: '#3b82f6' }] }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } } });
+      charts.clientVer = new Chart(document.getElementById('clientVerChart'), { type: 'bar', data: { labels: [], datasets: [{ data: [], backgroundColor: '#3b82f6' }] }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } } });
       charts.activity = new Chart(document.getElementById('activityChart'), { type: 'line', data: { labels: [], datasets: [
         { label: 'Nameplates', data: [], borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.1)', fill: true, tension: 0.2 },
         { label: 'Mailboxes', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: true, tension: 0.2 }

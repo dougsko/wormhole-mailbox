@@ -110,7 +110,7 @@ const dashboardHTML = `<!DOCTYPE html>
     <div class="timestamp">Last updated: <span id="lastUpdated">—</span></div>
   </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-dsN6yzfVr55Hd2g1XIwnt1QJUXEdDvoVVKY3bzYrn0xAvcIYVogKEEYd43E9rKTf" crossorigin="anonymous"></script>
+  <script src="/static/chart.umd.min.js" integrity="sha384-dsN6yzfVr55Hd2g1XIwnt1QJUXEdDvoVVKY3bzYrn0xAvcIYVogKEEYd43E9rKTf" crossorigin="anonymous"></script>
   <script>
     var colors = {
       happy: '#22c55e', lonely: '#f59e0b', pruney: '#6366f1',

@@ -4,12 +4,16 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+	"embed"
 )
 
 // Version is the reported server version (Server response header and the
 // WebSocket handshake's server header). It is a var so release builds can
 // stamp it via -ldflags "-X github.com/dougsko/wormhole-mailbox/internal/mailbox.Version=$(git describe --tags)".
 var Version = "0.8.0"
+
+//go:embed static/*
+var staticFS embed.FS
 
 // NewHandler builds the HTTP site: plain-text root at "/" (WebSocket upgrades
 // at "/" are also accepted), WebSocket at "/v1" (and "/v1/" for clients that
@@ -38,6 +42,9 @@ func NewHandler(server *Server, logRequests bool, pingInterval, pingTimeout floa
 
 	// Dashboard HTML
 	mux.Handle("/dashboard", getDashboardHandler())
+
+	// Static files for dashboard (Chart.js, etc.)
+	mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
 
 	// WebSocket endpoint
 	mux.Handle("/v1", ws)
